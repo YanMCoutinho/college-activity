@@ -2,212 +2,94 @@
 
 Este documento apresenta um resumo gerencial do notebook `Ponderada_ErikRafaYan.ipynb`, detalhando as etapas, decisões técnicas e resultados obtidos no projeto de implementação de uma rede neural LSTM (Long Short-Term Memory) para detecção de fraudes em transações financeiras utilizando o dataset IEEE-CIS Fraud Detection.
 
-## Objetivo
-O objetivo principal foi desenvolver um modelo de rede neural LSTM capaz de detectar fraudes em transações financeiras, aproveitando as características temporais dos dados através de sequências. O projeto focou na análise exploratória dos dados, preparação adequada para modelos sequenciais, definição da arquitetura LSTM, e avaliação do desempenho do modelo usando métricas apropriadas para dados desbalanceados.
+## Objetivo e Fundamentação Conceitual
 
-## Principais Etapas Realizadas
+O projeto teve como objetivo central desenvolver um modelo de rede neural LSTM capaz de detectar fraudes em transações financeiras, explorando fundamentalmente as características temporais inerentes aos dados transacionais. A escolha da arquitetura LSTM foi motivada pela necessidade de capturar dependências temporais de longo prazo nos padrões de comportamento fraudulento, algo que modelos tradicionais de redes neurais densas não conseguem realizar eficientemente.
 
-### 1. Setup e Carregamento dos Dados
-O trabalho iniciou-se com a instalação das dependências necessárias e o carregamento do dataset IEEE-CIS Fraud Detection através do Google Drive:
+As redes LSTM representam uma evolução das redes neurais recorrentes tradicionais, sendo especificamente projetadas para resolver o problema do desvanecimento do gradiente que afeta modelos sequenciais profundos. Esta capacidade de "memória" permite ao modelo identificar padrões fraudulentos que se manifestam ao longo de sequências temporais de transações, considerando não apenas as características individuais de cada transação, mas também o contexto histórico que a precede.
 
-```python
-%pip install gdown tensorflow tf-keras matplotlib keras-tuner gdown
-doc_id = "1u_OWAPkIdgJw1ah5xP_dGBFMSANxjxEl"
-URL = f"https://drive.google.com/uc?id={doc_id}"
-gdown.download(URL, arquivo_destino_colab, quiet=False)
-```
+## Metodologia e Desenvolvimento do Projeto
 
-O dataset carregado possui 151MB e contém variáveis já transformadas (V1-V28), além das variáveis Time, Amount e a variável alvo Class.
+### Configuração Inicial e Aquisição dos Dados
 
-### 2. Análise Exploratória dos Dados
-Foi realizada uma análise exploratória abrangente dos dados, incluindo visualização das primeiras linhas e estatísticas descritivas:
+O desenvolvimento do projeto iniciou-se com a configuração do ambiente computacional necessário para processamento de redes neurais profundas, incluindo a instalação de bibliotecas especializadas como TensorFlow, Keras-Tuner e ferramentas de visualização. O dataset IEEE-CIS Fraud Detection foi obtido através de um sistema de download automatizado, resultando em um conjunto de dados de 151MB contendo informações sobre transações financeiras já pré-processadas.
 
-```python
-df.head()
-df.describe()
-```
+A estrutura do dataset reflete uma abordagem cuidadosa de proteção da privacidade, onde as variáveis originais foram transformadas através de técnicas de anonimização, resultando em features denominadas V1 a V28. Além destas, o dataset mantém duas variáveis em sua forma original: Time, que representa a dimensão temporal crucial para nossa análise sequencial, e Amount, que indica o valor monetário das transações. A variável alvo Class distingue entre transações legítimas e fraudulentas.
 
-#### Análise das Distribuições
-Através de histogramas para todas as variáveis, foi observado que:
-- As componentes V1-V28 já estavam normalizadas
-- As variáveis Time e Amount necessitavam normalização devido à diferença de escala
-- Não havia valores textuais que precisassem de codificação
+### Exploração e Compreensão dos Dados
 
-#### Distribuição da Classe Alvo
-A análise do balanceamento revelou forte desbalanceamento entre as classes, similar ao dataset da semana 04:
+A análise exploratória revelou características fundamentais que influenciariam diretamente as decisões de modelagem subsequentes. A investigação das distribuições através de histogramas evidenciou que as variáveis V1-V28 já haviam passado por processos de normalização, apresentando distribuições centradas e com variâncias controladas. Esta descoberta foi crucial pois eliminou a necessidade de normalização adicional para essas features, permitindo que o foco fosse direcionado para as variáveis Time e Amount, que apresentavam escalas significativamente diferentes.
 
-```python
-class_distribution = df['Class'].value_counts(normalize=True) * 100
-```
+O desequilíbrio entre classes emergiu como um desafio central do projeto, espelhando padrões típicos encontrados em problemas de detecção de fraude no mundo real. A distribuição assimétrica, onde transações fraudulentas representam uma fração mínima do total, demandou a implementação de estratégias específicas de balanceamento e métricas de avaliação apropriadas para cenários de classes desbalanceadas.
 
-Este desbalanceamento destacou a necessidade de métricas específicas e técnicas de balanceamento de classes.
+A análise de correlação, implementada através de mapas de calor com threshold de 0.03 para visualização de relações significativas, revelou que várias variáveis, incluindo Time e diversas features da série V, apresentavam correlações fracas com a variável alvo. Esta descoberta sugere que a identificação de fraudes neste dataset requer a captura de padrões complexos e não-lineares, justificando ainda mais a escolha de arquiteturas de deep learning.
 
-#### Análise de Correlação
-Foi criado um mapa de calor das correlações, focando apenas em correlações absolutas maiores que 0.03:
+A presença generalizada de outliers, identificada através de análise de boxplots, indicou a necessidade de tratamento cuidadoso durante o pré-processamento. Em contextos de detecção de fraude, outliers podem representar tanto comportamentos fraudulentos genuínos quanto ruído nos dados, exigindo uma abordagem balanceada que preserve informações relevantes enquanto remove distorções prejudiciais ao treinamento.
 
-```python
-correlacao_base = df.corr()
-correlacao = correlacao_base.where(correlacao_base.abs() >= 0.03)
-sns.heatmap(correlacao, annot=True, cmap="coolwarm")
-```
+### Pré-processamento Adaptado para Modelagem Sequencial
 
-A análise revelou que variáveis como Time, V8, V13, V15, V20, V22, V23, V24, V25, V26, V27, V28 não apresentavam forte correlação com a variável dependente Class.
+O pré-processamento dos dados foi cuidadosamente redesenhado para atender às demandas específicas das redes neurais recorrentes, particularmente considerando a natureza temporal inerente às arquiteturas LSTM. Esta etapa representou um dos maiores desafios conceituais do projeto, pois diferentemente de modelos tradicionais que tratam cada observação independentemente, o LSTM requer uma estruturação sequencial que preserve a ordem cronológica dos eventos.
 
-#### Análise de Outliers
-Utilizando boxplots, foi identificada a presença significativa de outliers em todas as variáveis, indicando a necessidade de tratamento durante o pré-processamento.
+A separação temporal dos dados constituiu o primeiro passo crítico neste processo. Reconhecendo que a aleatoriedade típica da divisão treino-teste poderia destruir as dependências temporais essenciais para o aprendizado do LSTM, optou-se por uma abordagem sequencial rigorosa. Os dados foram ordenados cronologicamente através da variável Time, e posteriormente divididos em blocos contíguos: 75% para treinamento (217.878 observações), 10% para validação (24.208 observações) e 15% para teste (42.721 observações). Esta estratégia garante que o modelo seja treinado com dados históricos e avaliado com eventos futuros, simulando cenários reais de produção.
 
-### 3. Pré-processamento Específico para LSTM
-O pré-processamento foi adaptado para as necessidades específicas de redes neurais recorrentes:
+O tratamento de outliers demandou consideração especial no contexto de detecção de fraudes. Utilizando o método do intervalo interquartil (IQR) com fator 1.5, implementou-se uma função que remove observações extremas sem comprometer a identificação de padrões fraudulentos legítimos. A decisão de aplicar esta limpeza apenas ao conjunto de treinamento reflete a necessidade de preservar a integridade dos dados de validação e teste, mantendo suas características distributivas originais.
 
-#### Separação Temporal dos Dados
-Devido à natureza temporal do LSTM, os dados foram ordenados pela variável Time e separados sequencialmente:
+A normalização foi estrategicamente limitada à variável Amount, reconhecendo que as demais features já apresentavam escalas apropriadas. Esta decisão reflete um entendimento profundo da importância de preservar as relações originais entre variáveis já processadas, evitando distorções desnecessárias que poderiam prejudicar o aprendizado do modelo. A implementação incluiu o salvamento dos parâmetros de normalização do conjunto de treinamento, garantindo consistência na aplicação aos dados de validação e teste.
 
-```python
-seq_length = 30
-test_size = 0.15
-val_size = 0.10
+A transformação mais significativa envolveu a criação de sequências temporais através do TimeseriesGenerator. Com janelas de 30 passos temporais, cada entrada do modelo passou a representar não uma transação isolada, mas uma sequência de 30 transações consecutivas. Esta abordagem permite ao LSTM identificar padrões de comportamento que emergem ao longo do tempo, capturando sutilezas temporais que seriam invisíveis em análises pontuais. O resultado foi um conjunto de treinamento com 2.482 batches, cada um contendo múltiplas sequências de 30 transações.
 
-df_sorted = df.sort_values(by="Time").reset_index(drop=True)
-X = df_sorted.drop(['Class', 'Time'], axis=1).values
-y = df_sorted['Class'].values
+### Concepção e Implementação da Arquitetura LSTM
 
-n = len(df_sorted)
-n_test = int(n * test_size)
-n_val = int((n - n_test) * val_size)
+A arquitetura do modelo foi concebida seguindo princípios de design hierárquico, onde cada camada desempenha um papel específico na extração e processamento de informações temporais. A estrutura resultante reflete um equilíbrio cuidadoso entre capacidade de aprendizado e prevenção de overfitting, características essenciais para o sucesso em problemas de detecção de fraude.
 
-X_train = X[:-(n_test + n_val)]
-y_train = y[:-(n_test + n_val)]
-```
+A primeira camada LSTM, configurada com 64 neurônios e habilitada para retornar sequências completas (return_sequences=True), atua como um extrator primário de características temporais. Esta configuração permite que a camada processe toda a sequência de entrada e passe informações temporais refinadas para camadas subsequentes. O número de neurônios foi dimensionado para proporcionar capacidade suficiente de captura de padrões complexos sem incorrer em custos computacionais excessivos.
 
-Os conjuntos resultantes foram: Treino (217.878), Validação (24.208) e Teste (42.721).
+A inserção da primeira camada de Dropout com taxa de 0.2 representa uma estratégia fundamental de regularização. Esta técnica, que desativa aleatoriamente 20% dos neurônios durante o treinamento, força o modelo a desenvolver representações mais robustas e generalizáveis, reduzindo significativamente o risco de overfitting em um domínio onde a generalização é crucial.
 
-#### Remoção de Outliers
-Foi implementada uma função para remoção de outliers baseada no método IQR:
+A segunda camada LSTM, com 32 neurônios e sem retorno de sequências, funciona como um mecanismo de condensação de informações temporais. Esta camada recebe as representações temporais da primeira camada e as transforma em um vetor de características fixo, preparando os dados para a classificação final. A redução no número de neurônios reflete uma arquitetura em funil, onde a complexidade dimensional é gradualmente reduzida.
 
-```python
-def remove_outliers(df, factor=1.5):
-    for col in df_clean.select_dtypes(include=np.number).columns:
-        Q1 = df_clean[col].quantile(0.25)
-        Q3 = df_clean[col].quantile(0.75)
-        IQR = Q3 - Q1
-        lower = Q1 - factor * IQR
-        upper = Q3 + factor * IQR
-        df_clean = df_clean[(df_clean[col] >= lower) & (df_clean[col] <= upper)]
-```
+A segunda camada de Dropout mantém a mesma taxa de regularização, garantindo consistência na prevenção de overfitting ao longo de toda a arquitetura. A camada densa final, com um único neurônio e ativação sigmoid, transforma as representações aprendidas em probabilidades de classificação binária, apropriadas para o problema de detecção de fraude.
 
-#### Normalização
-A normalização foi aplicada apenas à variável Amount, mantendo os parâmetros do conjunto de treino:
+### Sistema de Avaliação Multidimensional
 
-```python
-X_train_norm = normalize_and_save_params(X_train_df, columns_to_normalize=['Amount'])
-X_val_norm = apply_normalization(X_val_df, 'normalization_params.json')
-X_test_norm = apply_normalization(X_test_df, 'normalization_params.json')
-```
+O sistema de métricas foi especificamente projetado para abordar os desafios inerentes aos problemas de classificação com classes desbalanceadas. Reconhecendo que a acurácia tradicional pode ser enganosa em cenários onde a classe majoritária domina numericamente, implementou-se um conjunto abrangente de métricas que capturam diferentes aspectos do desempenho do modelo.
 
-#### Geração de Sequências Temporais
-Para adequar os dados ao modelo LSTM, foram criadas janelas temporais de 30 passos:
+A precisão (Precision) mede a proporção de predições positivas que são verdadeiramente positivas, sendo crucial para minimizar falsos alarmes em sistemas de detecção de fraude. O recall quantifica a capacidade do modelo de identificar todas as instâncias fraudulentas, sendo fundamental para garantir que fraudes reais não passem despercebidas. A área sob a curva ROC (AUC-ROC) fornece uma medida global da capacidade discriminativa do modelo, enquanto a área sob a curva de Precision-Recall (AUC-PR) oferece uma avaliação mais sensível ao desbalanceamento de classes.
 
-```python
-train_gen = TimeseriesGenerator(X_train_norm, y_train, length=seq_length, batch_size=32)
-val_gen = TimeseriesGenerator(X_val_norm, y_val, length=seq_length, batch_size=32)
-test_gen = TimeseriesGenerator(X_test_norm, y_test, length=seq_length, batch_size=32)
-```
+### Estratégia de Treinamento e Balanceamento
 
-O generator de treino resultou em 2.482 batches.
+O processo de treinamento incorporou técnicas avançadas de balanceamento de classes através do uso de pesos diferenciados (class weights). Esta abordagem calcula automaticamente pesos inversamente proporcionais à frequência das classes, garantindo que o modelo atribua importância adequada aos exemplos da classe minoritária (fraudes) durante o processo de otimização.
 
-### 4. Construção e Arquitetura do Modelo LSTM
-Foi definida uma arquitetura LSTM com múltiplas camadas:
+O treinamento foi executado por 25 épocas, período suficiente para permitir convergência sem incorrer em overfitting excessivo. A implementação de callbacks de salvamento de modelo (ModelCheckpoint) garante que apenas a melhor versão do modelo, baseada na loss de validação, seja preservada. Esta estratégia é particularmente importante em problemas de detecção de fraude, onde a performance em dados não vistos é crucial para a aplicabilidade prática do sistema.
 
-```python
-def generate_model(optimizer='adam', loss='binary_crossentropy'):
-    model = Sequential()
-    model.add(layers.LSTM(64, return_sequences=True, input_shape=(seq_length, X_train_norm.shape[1])))
-    model.add(layers.Dropout(0.2))
-    model.add(layers.LSTM(32))
-    model.add(layers.Dropout(0.2))
-    model.add(layers.Dense(1, activation='sigmoid'))
-    
-    model.compile(optimizer=optimizer, loss=loss, metrics=[*get_metrics()])
-    return model
-```
+### Análise Integral dos Resultados e Interpretação dos Padrões
 
-A arquitetura incluiu:
-- Primeira camada LSTM com 64 neurônios e return_sequences=True
-- Primeira camada Dropout (0.2)
-- Segunda camada LSTM com 32 neurônios
-- Segunda camada Dropout (0.2)
-- Camada densa final com ativação sigmoid
+A implementação de um sistema abrangente de visualização permitiu uma análise multifacetada do comportamento do modelo durante o treinamento. A função de plotagem desenvolvida gera uma série de gráficos que rastreiam a evolução temporal das métricas fundamentais, incluindo loss de treino e validação, precisão, recall, F1-score derivado, e as áreas sob as curvas ROC e Precision-Recall. Esta abordagem visual facilita a identificação de padrões de aprendizado, tendências de convergência e potenciais sinais de overfitting ou underfitting.
 
-### 5. Métricas de Avaliação
-Foram implementadas métricas específicas para dados desbalanceados:
+### Diagnóstico de Performance e Identificação de Limitações
 
-```python
-def get_metrics():
-    precision = Precision(name="precision")
-    recall = Recall(name="recall")
-    auc_roc = AUC(name='auc_roc')
-    auc_pr = AUC(curve='PR', name='auc_pr')
-    return [precision, recall, auc_roc, auc_pr]
-```
+A análise detalhada dos resultados revelou um cenário preocupante de underfitting severo, caracterizado por métricas de performance consistentemente baixas tanto no conjunto de treinamento quanto no de validação. A precisão e o recall permaneceram próximos de zero durante todo o processo de treinamento, indicando que o modelo falhou fundamentalmente em estabelecer associações significativas entre as sequências temporais e os padrões de fraude.
 
-### 6. Treinamento do Modelo Baseline
-O modelo foi treinado utilizando class weights para balanceamento:
+O AUC-ROC de validação, oscilando em torno de 0.52, aproxima-se perigosamente do desempenho aleatório (0.5), sugerindo que o modelo não desenvolveu capacidade discriminativa substancial. Simultaneamente, a loss de validação manteve-se elevada (aproximadamente 0.08), confirmando que o processo de otimização não conseguiu identificar mínimos efetivos no espaço de parâmetros.
 
-```python
-class_weights = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
-class_weight_dict = dict(zip(np.unique(y_train), class_weights))
+Este comportamento de underfitting indica que a arquitetura atual possui capacidade insuficiente para capturar a complexidade inerente aos padrões fraudulentos presentes no dataset IEEE-CIS. A natureza anonimizada das features, combinada com a raridade extrema dos eventos fraudulentos, cria um cenário de aprendizado particularmente desafiador que demanda abordagens mais sofisticadas.
 
-history = model.fit(
-    train_gen,
-    epochs=25,
-    validation_data=val_gen,
-    class_weight=class_weight_dict,
-    callbacks=[checkpoint_callback]
-)
-```
+### Análise Causal e Implicações Estratégicas
 
-### 7. Visualização e Análise dos Resultados
-Foi implementada uma função para plotar múltiplas métricas:
+O fracasso do modelo baseline pode ser atribuído a múltiplos fatores inter-relacionados que transcendem questões puramente técnicas. Primeiramente, a complexidade intrínseca do dataset IEEE-CIS, onde as features foram submetidas a transformações de anonimização que podem ter obscurecido padrões essenciais, representa um desafio fundamental. Estas transformações, embora necessárias para proteção da privacidade, podem ter eliminado correlações sutis que seriam críticas para a identificação de comportamentos fraudulentos.
 
-```python
-def plot_history_data(history):
-    # Plot Loss, Precision, Recall, F1-Score, AUC-ROC, AUC-PR
-```
+A arquitetura LSTM implementada, embora conceitualmente apropriada para captura de dependências temporais, pode ter sido dimensionada de forma conservadora demais para lidar com a complexidade dos padrões presentes. A configuração atual, com apenas duas camadas LSTM e um total de 96 neurônios recorrentes, pode não possuir capacidade representacional suficiente para modelar as interações complexas e não-lineares características dos dados fraudulentos.
 
-A função gera gráficos para:
-- Loss de treino e validação
-- Precision de treino e validação
-- Recall de treino e validação
-- F1-Score calculado e plotado
-- AUC-ROC de treino e validação
-- AUC-PR de treino e validação
+O desbalanceamento extremo entre classes, apesar de ter sido parcialmente endereçado através de class weights, continua representando um obstáculo significativo. A proporção mínima de exemplos fraudulentos cria um cenário onde o modelo tem exposição limitada aos padrões que precisa aprender, dificultando o desenvolvimento de representações internas robustas.
 
-### 8. Resultados e Limitações
-O modelo baseline apresentou problemas significativos de underfitting:
-- Precision no treino: próxima de 0
-- Recall no treino: próxima de 0
-- AUC-ROC de validação: em torno de 0.52 (próximo ao aleatório)
-- Loss de validação: alta (em torno de 0.08)
+### Direcionamentos Estratégicos para Evolução do Projeto
 
-O underfitting observado indica que o modelo não conseguiu aprender adequadamente os padrões dos dados, sugerindo a necessidade de:
-- Ajustes na arquitetura (mais neurônios, mais camadas)
-- Modificações nos hiperparâmetros
-- Alterações na função de perda
-- Revisão do pré-processamento
+O projeto estabeleceu fundações sólidas para desenvolvimento futuro, demonstrando a implementação correta de pipeline de pré-processamento temporal e sistema de avaliação apropriado para dados desbalanceados. As lições aprendidas durante esta implementação inicial fornecem insights valiosos para iterações subsequentes.
 
-### 9. Conclusões e Próximos Passos
-O projeto implementou com sucesso uma arquitetura LSTM para detecção de fraudes, mas o modelo baseline mostrou performance insatisfatória. Os principais desafios identificados foram:
+A evolução natural do projeto deve contemplar arquiteturas LSTM substancialmente mais profundas e complexas, potencialmente incorporando mecanismos de atenção que permitam ao modelo focar dinamicamente em aspectos relevantes das sequências temporais. A exploração de arquiteturas híbridas, combinando elementos convolucionais para extração de características locais com componentes recorrentes para modelagem temporal, representa uma avenue promissora para capturar múltiplas escalas de padrões.
 
-1. **Underfitting Severo**: O modelo não conseguiu aprender os padrões nos dados de treino
-2. **Complexidade dos Dados**: O dataset IEEE-CIS apresenta características mais complexas que requerem arquiteturas mais sofisticadas
-3. **Balanceamento de Classes**: Apesar do uso de class weights, o modelo ainda não conseguiu identificar adequadamente a classe minoritária
+A implementação de funções de perda especializadas, como focal loss ou técnicas de meta-learning adaptadas para cenários de classe extremamente desbalanceada, pode oferecer melhorias significativas na capacidade do modelo de aprender a partir de exemplos raros. Adicionalmente, técnicas avançadas de aumento de dados (data augmentation) específicas para dados sequenciais poderiam enriquecer o conjunto de exemplos fraudulentos disponíveis para treinamento.
 
-**Recomendações para melhoria**:
-- Experimentar arquiteturas LSTM mais profundas
-- Implementar técnicas de regularização avançadas
-- Testar diferentes funções de perda (focal loss, por exemplo)
-- Aplicar técnicas de aumento de dados (data augmentation)
-- Considerar arquiteturas híbridas (CNN+LSTM)
-- Otimizar hiperparâmetros usando Keras Tuner
+A otimização sistemática de hiperparâmetros, empregando ferramentas como Keras Tuner ou técnicas de otimização bayesiana, permitiria explorar o espaço de configurações de forma mais eficiente, potencialmente identificando combinações de parâmetros que resultem em performance superior.
 
-O projeto estabeleceu uma base sólida para desenvolvimento futuro, com pipeline completo de pré-processamento temporal e avaliação adequada para dados desbalanceados.
+Finalmente, a incorporação de técnicas de interpretabilidade e explicabilidade, como SHAP ou LIME adaptadas para modelos sequenciais, seria fundamental para construir confiança no sistema e facilitar sua eventual adoção em ambientes de produção, onde a compreensão das decisões do modelo é crucial para aceitação regulatória e operacional.
