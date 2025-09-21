@@ -87,3 +87,111 @@ Ao avaliar as métricas de desempenho, percebe-se que **a precisão no treino é
 O **F1-score**, que combina precisão e recall, apresenta valores extremamente baixos, variando apenas de 0,007 para 0,008 — evidenciando baixa capacidade discriminativa. As curvas de **AUC-ROC** e **AUC-PR** também reforçam esse diagnóstico: embora a AUC-ROC tenha um leve aumento de \~0,50 para \~0,54, indicando um desempenho apenas marginalmente melhor que um classificador aleatório, a AUC-PR permanece em valores muito baixos (\~0,0018 para \~0,0019), o que é crítico para datasets desbalanceados, já que essa métrica mede a qualidade da separação entre classes raras e majoritárias.
 
 Esses resultados mostram que o modelo **não está generalizando bem** e apresenta dificuldade significativa em separar casos positivos de negativos. As principais limitações identificadas estão associadas ao **desbalanceamento das classes**, à **falta de representatividade nas features** e possivelmente a uma **arquitetura superparametrizada** para o tamanho do dataset. Além disso, o crescimento quase inexistente das métricas de desempenho ao longo das épocas indica que há **pouco aprendizado efetivo após as primeiras iterações**, sugerindo a necessidade de revisar a função de perda, as métricas de avaliação e a preparação dos dados para garantir que a rede esteja recebendo informações úteis para o treinamento.
+
+### Melhoria do modelo
+
+#### 1) Focal Loss
+
+**O que é**
+Uma variação da entropia cruzada que **reduz o peso dos exemplos fáceis** e **aumenta o foco nos difíceis**, além de permitir **rebalancear a classe positiva** com um fator $\alpha$. É especialmente útil em dados **desbalanceados**.
+
+**Por que ajuda**
+Em bases com poucos positivos, a entropia cruzada “pura” é dominada por negativos fáceis. A Focal Loss **amortece** a contribuição desses casos triviais e **concentra gradiente** onde o modelo erra mais (normalmente a classe minoritária).
+
+**Formulação (binária)**
+Com rótulo $y\in\{0,1\}$ e probabilidade prevista $p\in(0,1)$ para $y=1$:
+
+$$
+\text{FL}(y,p) 
+= -\,\alpha\,y\,(1-p)^{\gamma}\,\log(p)\;-\;(1-\alpha)\,(1-y)\,p^{\gamma}\,\log(1-p).
+$$
+
+* $\gamma\ge0$ (tipicamente 1–5) é o **fator de focalização**: quanto maior, mais a loss ignora exemplos fáceis.
+* $\alpha\in(0,1)$ (ex.: 0,25) **rebalanceia** a importância relativa da classe positiva.
+
+**Parâmetros-chave (sugestões iniciais)**
+
+* $\alpha$: 0,25–0,5 para dar peso extra ao positivo (ajuste conforme a razão de classes).
+* $\gamma$: 2 é um bom ponto de partida; aumente se ainda houver domínio de exemplos fáceis.
+
+**Boas práticas**
+
+* Em testes iniciais, **não** combinar Focal Loss e pesos de classe ao mesmo tempo; compare A/B.
+* Avaliar por **PR-AUC** e **F1** (melhores indicadores com desbalanceamento).
+
+---
+
+#### 2) Reduce Learning Rate on Plateau (ReduceLROnPlateau)
+
+**O que é**
+Um agendador que **reduz a taxa de aprendizado (LR)** quando a métrica monitorada **estagna** por algumas épocas (plateau).
+
+**Por que ajuda**
+LR mais alto acelera o início, mas pode atrapalhar o **refino fino**. Ao detectar plateau, reduzir o LR permite **ajustes menores** e melhora a convergência em regiões estreitas do espaço de parâmetros.
+
+**Regra (matemática)**
+Se $\eta_t$ é o LR na época $t$ e $f\in(0,1)$ é o **fator de redução** (ex.: $f=0{,}5$), quando a métrica não melhora por um número de épocas chamado **patience**, atualiza-se:
+
+$$
+\eta_{t+1}\;\leftarrow\;\max\big(f\cdot \eta_t,\ \eta_{\min}\big),
+$$
+
+onde $\eta_{\min}$ é um LR mínimo para evitar valores degenerados.
+
+**Parâmetros-chave (sugestões iniciais)**
+
+* **Métrica monitorada**: preferir **PR-AUC** (modo “max”) ou **val\_loss** (modo “min”), conforme o objetivo.
+* **Fator** $f$: 0,1–0,5.
+* **Patience**: 2–4 épocas sem melhora já são suficientes para reagir sem “nervosismo”.
+* **LR mínimo**: algo pequeno, mas não zero (ex.: $10^{-6}$ ou $10^{-7}$).
+
+**Boas práticas**
+
+* Use com **Early Stopping**: primeiro reduz LR para tentar melhorar; se não houver evolução, interrompa.
+
+---
+
+#### 3) Early Stopping
+
+**O que é**
+Critério que **interrompe o treinamento** quando a métrica de validação **para de melhorar** e, idealmente, **restaura os melhores pesos** observados.
+
+**Por que ajuda**
+Evita **overfitting** (quando a validação piora enquanto o treino melhora) e **economiza tempo**. Atua como **regularização implícita** ao impedir que o modelo memorize ruído após o ponto ótimo.
+
+**Formulação (conceito)**
+Considere a sequência de valores da métrica de validação $m_t$. Defina o melhor valor histórico $m^\*$ e um limiar mínimo de melhora $\delta$. O treinamento é interrompido quando:
+
+$$
+\text{não há } m_t \text{ tal que } 
+\begin{cases}
+m_t > m^\* + \delta & \text{(modo “max”)}\\[2pt]
+m_t < m^\* - \delta & \text{(modo “min”)}
+\end{cases}
+$$
+
+por **patience** épocas consecutivas; então os pesos voltam ao ponto $\tau^\*$ onde $m^\*$ ocorreu.
+
+**Parâmetros-chave (sugestões iniciais)**
+
+* **Métrica monitorada**: **PR-AUC** (modo “max”) ou **val\_loss** (modo “min”), conforme prioridade.
+* **Patience**: 4–8 épocas (equilíbrio entre não parar cedo demais e não treinar em excesso).
+* **Min delta** $\delta$: melhoria mínima relevante (ex.: $10^{-4}$ para métricas contínuas).
+* **Restaurar melhores pesos**: essencial para implantar o melhor estado do modelo.
+
+---
+
+#### Como as três melhorias se complementam
+
+* **Focal Loss** melhora o **sinal de aprendizado** nos exemplos importantes (difíceis/raros), elevando **recall** e **PR-AUC** em contextos desbalanceados.
+* **ReduceLROnPlateau** melhora a **otimização** ao permitir **passos menores** quando a evolução desacelera, o que tende a **estabilizar** e **refinar** o desempenho em validação.
+* **Early Stopping** limita a exposição ao **ruído** e interrompe o treino quando **não há ganhos reais**, preservando a **melhor generalização** observada.
+
+
+#### Resultados alcançados com a melhoria
+
+A evolução das curvas indica que a **loss de treino** permanece praticamente nula desde o início, enquanto a **loss de validação** cai ligeiramente (≈0,043 para ≈0,040) e logo se estabiliza. Esse comportamento é típico de cenários **extremamente desbalanceados**: o modelo aprende a prever quase sempre a classe negativa, obtendo perda baixa sem, contudo, ganhar capacidade de separação entre classes. Isso se confirma nas métricas de validação: a **precisão** cresce apenas de \~0,0026 para \~0,00275; o **recall** fica praticamente **plano** em \~0,22; e o **F1** quase não se move (\~0,005 para \~0,0054). As métricas de ranking acompanham a mesma leitura: a **AUC-ROC** oscila em torno de 0,49–0,50 (nível aleatório) e a **AUC-PR** fica perto de 0,00185, valor muito próximo da **taxa base da classe positiva**, revelando **separabilidade praticamente nula**. Em suma, houve um pequeno ganho de **calibração** (leve queda da `val_loss`), porém **sem ganho real de separabilidade** (ROC/PR permanecem próximas do aleatório). No conjunto de treino, as métricas ficam próximas de zero porque as saídas do modelo tendem a valores muito baixos e, com **threshold** padrão de 0,5, quase não há predições positivas.
+
+As melhorias testadas podem não ter produzido efeito visível por alguns motivos. Primeiro, o **desequilíbrio extremo** domina o aprendizado: otimizar a entropia cruzada favorece “acertar negativos”, e ajustes como **Early Stopping** e **ReduceLROnPlateau** apenas regulam a dinâmica do treino — não criam separação quando o **sinal da classe rara** é fraco. Segundo, houve um **desalinhamento de monitoramento**: focar em `val_loss` prioriza reduzir erros na classe majoritária, enquanto, em eventos raros, o que move o resultado é **PR-AUC**, **recall da positiva** e **F1**. Terceiro, o **threshold fixo (0,5)** inviabiliza ganhos práticos quando as pontuações ficam muito próximas de zero; sem **tuning de limiar** com base na curva precisão-recall, mesmo pequenas melhorias de score não se traduzem em mais acertos positivos. Quarto, a **Focal Loss** pode ter sido **ausente, subconfigurada** (γ muito baixo, α inadequado) ou **neutralizada** pelo uso simultâneo de `class_weight`, reduzindo seu efeito de concentrar gradiente nos exemplos difíceis. Quinto, a **composição dos batches** pode conter poucos (ou nenhum) positivos, fazendo com que o gradiente “veja” quase sempre negativos e empurre o modelo a prever zero; isso explica o **recall plano** e a estagnação das métricas mesmo após reduzir o learning rate. Sexto, pode haver **sinal fraco nas features/janelas**: a discreta queda de `val_loss` sugere ajuste numérico, não aprendizado substantivo de padrões da classe rara. Por fim, **regularização e otimizador** não parecem ser o gargalo principal: com separabilidade quase nula, o agendador de LR apenas refina a estratégia de “prever zero”, e o Early Stopping, embora evite overfitting, não cria poder discriminativo.
+
+Em termos práticos, os gráficos sustentam que o modelo está **bem calibrado para dizer “não”**, mas **não aprendeu a distinguir a classe positiva**. Para que futuras melhorias apareçam nas curvas, é crucial atacar diretamente o **desbalanceamento** (p.ex., Focal Loss bem parametrizada sem `class_weight` concomitante, rebalance por batch/oversampling), **monitorar PR-AUC** e **ajustar o threshold** por objetivo (ex.: maximizar F1 ou recall em precisão mínima), além de revisar **features/janelas** e a **proporção de positivos por lote** para fornecer sinal útil ao treinamento.
